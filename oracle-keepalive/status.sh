@@ -19,9 +19,14 @@ net_bytes() {
 echo "=== 整机配置 ==="
 printf 'vCPU: %s\n' "$(nproc)"
 awk '/^MemTotal:/ {printf "物理内存: %.1f GiB\n", $2/1048576}' /proc/meminfo
-df -h /
+echo "已挂载的磁盘文件系统："
+df -hT -x tmpfs -x devtmpfs
+if command -v lsblk >/dev/null; then
+  echo "物理/虚拟磁盘："
+  lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS
+fi
+echo "本项目数据所在磁盘："
 df -h /opt
-if [[ -d /var/lib/docker ]]; then df -h /var/lib/docker; fi
 if [[ -d "$INSTALL_DIR/data" ]]; then
   printf '本项目数据目录: '
   du -sh "$INSTALL_DIR/data" | awk '{print $1}'
