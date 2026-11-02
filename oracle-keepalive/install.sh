@@ -63,11 +63,12 @@ done
 for value in "$MEMORY_MB" "$DOWNLOAD_MB" "$DOWNLOAD_INTERVAL" "$STOCK_INTERVAL" "$CONTAINER_MEM_LIMIT_MB" "$CYCLE_MIN" "$CYCLE_MAX" "$REST_TIME"; do
   [[ "$value" =~ ^[0-9]+$ ]] || { echo "Expected a non-negative integer: $value" >&2; exit 2; }
 done
-[[ "$CPU_PERCENT" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "Invalid --cpu-percent" >&2; exit 2; }
+[[ "$CPU_PERCENT" =~ ^[0-9]+$ ]] || { echo "Invalid --cpu-percent" >&2; exit 2; }
 [[ "$CONTAINER_CPUS" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "Invalid --cpus" >&2; exit 2; }
 [[ "$SYMBOLS" =~ ^[A-Za-z0-9,._^-]*$ ]] || { echo "Invalid --symbols" >&2; exit 2; }
 [[ "$DOWNLOAD_URL" =~ ^https://[^[:space:]]+$ ]] || { echo "--download-url must be HTTPS" >&2; exit 2; }
 ((MEMORY_MB <= 8192 && DOWNLOAD_MB <= 1000)) || { echo "Memory/download setting is above the supported limit" >&2; exit 2; }
+((CPU_PERCENT <= 100)) || { echo "--cpu-percent must be between 0 and 100" >&2; exit 2; }
 ((CONTAINER_MEM_LIMIT_MB >= MEMORY_MB + 512)) || { echo "--mem-limit-mb must exceed --memory-mb by at least 512" >&2; exit 2; }
 ((CYCLE_MIN <= CYCLE_MAX && CYCLE_MIN >= 30 && DOWNLOAD_INTERVAL >= 30 && STOCK_INTERVAL >= 30)) || { echo "Invalid interval or cycle range" >&2; exit 2; }
 
