@@ -228,15 +228,21 @@ def cpu_controller(duty_cycle: multiprocessing.Value) -> None:
 
 
 def memory() -> None:
+    history: deque[float] = deque(maxlen=10)
     while True:
         if not run_enabled.is_set():
             memory_pool.clear()
+            history.clear()
             time.sleep(1)
             continue
         total_mb, available_mb = read_host_memory()
         used_mb = total_mb - available_mb
-        desired = round(max(0, min(MEMORY_CAP_MB,
-                        len(memory_pool) + total_mb * MEMORY_TARGET_PERCENT / 100 - used_mb)))
+        history.append(used_mb)
+        error_mb = total_mb * MEMORY_TARGET_PERCENT / 100 - statistics.mean(history)
+        if abs(error_mb) < max(16, total_mb * 0.005):
+            desired = len(memory_pool)
+        else:
+            desired = round(max(0, min(MEMORY_CAP_MB, len(memory_pool) + error_mb)))
         desired = min(desired, len(memory_pool) + max(0, available_mb - 256))
         if desired > len(memory_pool):
             for _ in range(min(desired - len(memory_pool), 16)):
