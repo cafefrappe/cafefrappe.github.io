@@ -199,8 +199,10 @@ def analytics() -> None:
             recent = np.asarray(prices[-20:], dtype=float)
             mean = statistics.mean(prices[-200:])
             volatility = float(np.std(np.diff(recent)))
+            price_volatility = float(np.std(recent) / mean * 100) if mean else 0.0
+            ema20 = float(np.mean(recent))
             momentum = float(recent[-1] - recent[0])
-            report.append(f"{symbol}: avg={mean:.2f} recent={recent[-1]:.2f}")
+            report.append(f"{symbol}: avg={mean:.2f} ma20={ema20:.2f} vol={price_volatility:.2f}%")
             ranking.append((abs(momentum), symbol, momentum, volatility))
         ranking.sort(reverse=True)
         if report:
