@@ -34,6 +34,28 @@ curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/mai
 
 ## 管理
 
+一键查询状态（显示容器状态、CPU、内存、网络 I/O、磁盘 I/O、进程数、主机负载和最近状态日志）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/status.sh | sudo bash
+```
+
+一键删除工作负载，保留 Docker（默认）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/uninstall.sh | sudo bash -s -- --keep-docker
+```
+
+一键删除工作负载并卸载 Docker 软件包：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/uninstall.sh | sudo bash -s -- --remove-docker
+```
+
+卸载 Docker 前会检查是否存在其他容器；有其他容器时会拒绝卸载。Docker 的数据目录仍会保留，避免误删旧镜像或卷。[Docker 官方卸载说明](https://docs.docker.com/engine/install/ubuntu/#uninstall-docker-engine)也将软件包卸载与删除数据目录分成两步。
+
+手动管理命令：
+
 ```sh
 sudo docker compose -f /opt/oracle-keepalive/compose.yaml ps
 sudo docker compose -f /opt/oracle-keepalive/compose.yaml logs -f --tail=100
