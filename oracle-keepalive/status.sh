@@ -8,6 +8,9 @@ cpu_times() {
   awk 'NR==1 {idle=$5+$6; total=0; for (i=2; i<=NF; i++) total+=$i; printf "%.0f %.0f\n", total, idle}' /proc/stat
 }
 default_interface="$(ip route show default 2>/dev/null | awk 'NR==1 {for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' || true)"
+if [[ -z "$default_interface" ]]; then
+  default_interface="$(awk '$2=="00000000" {print $1; exit}' /proc/net/route)"
+fi
 net_bytes() {
   if [[ -z "$default_interface" ]]; then echo '0 0'; return; fi
   awk -F: -v iface="$default_interface" '$1 ~ "^[[:space:]]*" iface "[[:space:]]*$" {gsub(/^[[:space:]]+/, "", $2); split($2,a,/[[:space:]]+/); print a[1],a[9]}' /proc/net/dev
