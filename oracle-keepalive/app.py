@@ -8,6 +8,7 @@ import statistics
 import threading
 import time
 import multiprocessing
+import shutil
 from pathlib import Path
 from collections import defaultdict, deque
 from datetime import datetime
@@ -35,9 +36,12 @@ def number(name: str, default: str, minimum: float = 0) -> float:
     return value
 
 
-MEMORY_TARGET_PERCENT = int(number("MEMORY_TARGET_PERCENT", "10"))
+MEMORY_TARGET_PERCENT = int(number("MEMORY_TARGET_PERCENT", "35"))
 MEMORY_CAP_MB = int(number("MEMORY_CAP_MB", "1024"))
-CPU_PERCENT = number("CPU_TARGET_PERCENT", "25")
+DISK_TARGET_PERCENT = int(number("DISK_TARGET_PERCENT", "35"))
+DISK_CAP_MB = int(number("DISK_CAP_MB", "20480"))
+DAILY_PAUSE_MINUTES = int(number("DAILY_PAUSE_MINUTES", "5"))
+CPU_PERCENT = number("CPU_TARGET_PERCENT", "30")
 HOST_CPUS = int(number("HOST_CPUS", str(os.cpu_count() or 1), 1))
 DOWNLOAD_MB = int(number("DOWNLOAD_MB", "10"))
 DOWNLOAD_INTERVAL = number("DOWNLOAD_INTERVAL", "1800", 30)
@@ -53,17 +57,21 @@ SYMBOLS = [s.strip().upper() for s in (os.getenv("SYMBOLS") or DEFAULT_SYMBOLS).
 DOWNLOAD_URL = os.getenv("DOWNLOAD_URL", "https://speed.cloudflare.com/__down")
 CONFIG_PATH = Path("/config/runtime.env")
 METRICS_PATH = Path("/config/metrics.env")
+DATA_DIR = Path("/data/managed")
 CONFIG_VERSION = 0
 
 if not 0 <= CPU_PERCENT <= 100:
     raise ValueError("CPU_PERCENT must be between 0 and 100")
 if CYCLE_MIN > CYCLE_MAX:
     raise ValueError("CYCLE_MIN cannot exceed CYCLE_MAX")
-if not 0 <= MEMORY_TARGET_PERCENT <= 70 or DOWNLOAD_MB > 1000:
-    raise ValueError("MEMORY_TARGET_PERCENT must be 0..70 and DOWNLOAD_MB <= 1000")
+if not 0 <= MEMORY_TARGET_PERCENT <= 55 or not 0 <= DISK_TARGET_PERCENT <= 55 or DOWNLOAD_MB > 1000:
+    raise ValueError("Memory/disk targets must be 0..55 and DOWNLOAD_MB <= 1000")
 
 active = threading.Event()
 active.set()
+run_enabled = multiprocessing.Event()
+run_enabled.set()
+disk_lock = threading.Lock()
 stock_history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=200))
 counts = defaultdict(int)
 memory_pool: list[bytearray] = []
@@ -75,7 +83,7 @@ def log(tag: str, message: str) -> None:
 
 
 def wait_active() -> None:
-    while not active.is_set():
+    while not active.is_set() or not run_enabled.is_set():
         time.sleep(1)
 
 
@@ -94,13 +102,17 @@ def read_cpu_times() -> tuple[int, int]:
 
 def reload_config() -> None:
     global CONFIG_VERSION, CPU_PERCENT, MEMORY_TARGET_PERCENT, MEMORY_CAP_MB
+    global DISK_TARGET_PERCENT, DISK_CAP_MB, DAILY_PAUSE_MINUTES
     global DOWNLOAD_MB, DOWNLOAD_INTERVAL, STOCK_INTERVAL, WEATHER_INTERVAL
     global FX_INTERVAL, CLOUD_INTERVAL, ANALYTICS_INTERVAL, CYCLE_MIN, CYCLE_MAX, REST_TIME
     global SYMBOLS, DOWNLOAD_URL
     fields = {
         "CPU_TARGET_PERCENT": ("CPU_PERCENT", 0, 80),
-        "MEMORY_TARGET_PERCENT": ("MEMORY_TARGET_PERCENT", 0, 70),
+        "MEMORY_TARGET_PERCENT": ("MEMORY_TARGET_PERCENT", 0, 55),
         "MEMORY_CAP_MB": ("MEMORY_CAP_MB", 0, 1000000),
+        "DISK_TARGET_PERCENT": ("DISK_TARGET_PERCENT", 0, 55),
+        "DISK_CAP_MB": ("DISK_CAP_MB", 0, 1000000),
+        "DAILY_PAUSE_MINUTES": ("DAILY_PAUSE_MINUTES", 1, 60),
         "DOWNLOAD_MB": ("DOWNLOAD_MB", 0, 1000),
         "DOWNLOAD_INTERVAL": ("DOWNLOAD_INTERVAL", 30, 86400),
         "STOCK_INTERVAL": ("STOCK_INTERVAL", 30, 86400),
@@ -135,7 +147,7 @@ def reload_config() -> None:
             SYMBOLS = symbols
             DOWNLOAD_URL = url
             CONFIG_VERSION += 1
-            log("CONFIG", f"loaded CPU target={CPU_PERCENT}% host, RAM target={MEMORY_TARGET_PERCENT}% host, download={DOWNLOAD_MB}MiB/{DOWNLOAD_INTERVAL}s")
+            log("CONFIG", f"loaded CPU={CPU_PERCENT}%, RAM={MEMORY_TARGET_PERCENT}%, disk={DISK_TARGET_PERCENT}% of host; download={DOWNLOAD_MB}MiB/{DOWNLOAD_INTERVAL}s")
     except (OSError, KeyError, ValueError) as exc:
         log("CONFIG", f"configuration not loaded: {exc}")
 
@@ -172,9 +184,12 @@ def cpu_worker(duty_cycle: multiprocessing.Value, worker_index: int, worker_coun
     value = worker_index + 1
     time.sleep(period * worker_index / worker_count)
     while True:
+        if not run_enabled.is_set():
+            time.sleep(0.5)
+            continue
         start = time.monotonic()
         busy = period * duty_cycle.value
-        while time.monotonic() - start < busy:
+        while run_enabled.is_set() and time.monotonic() - start < busy:
             value = (value * 1664525 + 1013904223) & 0xFFFFFFFF
         time.sleep(max(0, period - (time.monotonic() - start)))
 
@@ -194,8 +209,11 @@ def cpu_controller(duty_cycle: multiprocessing.Value) -> None:
         history.append(100 * (total - idle) / total)
         avg_1m = statistics.mean(list(history)[-12:])
         avg_5m = statistics.mean(history)
-        correction = max(-0.05, min(0.05, (CPU_PERCENT - avg_1m) * 0.0025))
-        duty_cycle.value = max(0, min(0.9, duty_cycle.value + correction))
+        if run_enabled.is_set():
+            correction = max(-0.05, min(0.05, (CPU_PERCENT - avg_1m) * 0.0025))
+            duty_cycle.value = max(0, min(0.9, duty_cycle.value + correction))
+        else:
+            duty_cycle.value = 0
         total_mb, available_mb = read_host_memory()
         used_percent = 100 * (total_mb - available_mb) / total_mb
         memory_history.append(used_percent)
@@ -211,6 +229,10 @@ def cpu_controller(duty_cycle: multiprocessing.Value) -> None:
 
 def memory() -> None:
     while True:
+        if not run_enabled.is_set():
+            memory_pool.clear()
+            time.sleep(1)
+            continue
         total_mb, available_mb = read_host_memory()
         used_mb = total_mb - available_mb
         desired = round(max(0, min(MEMORY_CAP_MB,
@@ -222,6 +244,73 @@ def memory() -> None:
         elif desired < len(memory_pool):
             del memory_pool[max(desired, len(memory_pool) - 16):]
         time.sleep(1)
+
+
+def project_files() -> list[Path]:
+    return sorted(DATA_DIR.glob("block-*.bin"))
+
+
+def disk() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        if not run_enabled.is_set():
+            time.sleep(1)
+            continue
+        with disk_lock:
+            usage = shutil.disk_usage(DATA_DIR)
+            files = project_files()
+            owned_bytes = sum(path.stat().st_size for path in files)
+            current_percent = 100 * usage.used / usage.total
+            cap_bytes = DISK_CAP_MB * 1048576
+            reserve_bytes = max(1024 ** 3, usage.total // 5)
+            if files and (usage.free < reserve_bytes + 128 * 1048576 or
+                          DISK_TARGET_PERCENT == 0 or owned_bytes > cap_bytes or
+                          current_percent > DISK_TARGET_PERCENT + 1):
+                if usage.free < reserve_bytes + 128 * 1048576 or DISK_TARGET_PERCENT == 0:
+                    remove_count = len(files)
+                else:
+                    surplus = max(owned_bytes - cap_bytes,
+                                  int(usage.used - usage.total * DISK_TARGET_PERCENT / 100))
+                    remove_count = min(16, max(1, (surplus + 16 * 1048576 - 1) // (16 * 1048576)))
+                for path in files[-remove_count:]:
+                    path.unlink()
+            elif current_percent < DISK_TARGET_PERCENT - 0.2 and owned_bytes < cap_bytes:
+                needed = int(usage.total * DISK_TARGET_PERCENT / 100 - usage.used)
+                size = min(16 * 1048576, needed, cap_bytes - owned_bytes,
+                           usage.free - reserve_bytes)
+                if size >= 1048576:
+                    path = DATA_DIR / f"block-{time.time_ns()}.bin"
+                    try:
+                        with path.open("xb") as stream:
+                            remaining = size
+                            block = bytes(1048576)
+                            while remaining > 0:
+                                written = min(remaining, len(block))
+                                stream.write(block[:written])
+                                remaining -= written
+                    except OSError as exc:
+                        path.unlink(missing_ok=True)
+                        log("DISK", f"write stopped: {exc}")
+        time.sleep(2)
+
+
+def daily_maintenance() -> None:
+    while True:
+        time.sleep(24 * 3600)
+        run_enabled.clear()
+        log("MAINTENANCE", "paused workloads; clearing project disk files")
+        try:
+            with disk_lock:
+                for path in project_files():
+                    try:
+                        path.unlink()
+                    except OSError as exc:
+                        log("MAINTENANCE", f"could not remove {path.name}: {exc}")
+            memory_pool.clear()
+            time.sleep(DAILY_PAUSE_MINUTES * 60)
+        finally:
+            log("MAINTENANCE", "pause finished; exiting so Docker restarts a fresh process")
+            os._exit(75)
 
 
 def download() -> None:
@@ -330,19 +419,23 @@ def analytics() -> None:
 
 def status() -> None:
     while True:
-        log("STATUS", f"stock={counts['stock']} weather={counts['weather']} fx={counts['fx']} cloud={counts['cloud']} memory={len(memory_pool)}MiB")
+        usage = shutil.disk_usage(DATA_DIR)
+        disk_percent = 100 * usage.used / usage.total
+        log("STATUS", f"stock={counts['stock']} weather={counts['weather']} fx={counts['fx']} cloud={counts['cloud']} project_memory={len(memory_pool)}MiB host_disk={disk_percent:.1f}%")
         time.sleep(30)
 
 
 def main() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     reload_config()
     duty_cycle = multiprocessing.Value("d", 0.0)
-    log("CONFIG", f"host_cpus={HOST_CPUS} symbols={len(SYMBOLS)} CPU target={CPU_PERCENT}% whole host, RAM target={MEMORY_TARGET_PERCENT}% whole host")
+    log("CONFIG", f"host_cpus={HOST_CPUS} symbols={len(SYMBOLS)} CPU target={CPU_PERCENT}% RAM target={MEMORY_TARGET_PERCENT}% disk target={DISK_TARGET_PERCENT}%")
     for index in range(HOST_CPUS):
         multiprocessing.Process(target=cpu_worker, args=(duty_cycle, index, HOST_CPUS), daemon=True).start()
     for name, target in (("config-reload", reload_loop),
                          ("cpu-controller", lambda: cpu_controller(duty_cycle)),
-                         ("cycle", cycle), ("memory", memory), ("download", download),
+                         ("cycle", cycle), ("memory", memory), ("disk", disk),
+                         ("daily-maintenance", daily_maintenance), ("download", download),
                          ("stocks", stocks), ("weather", weather), ("fx", fx), ("cloud", cloud),
                          ("analytics", analytics), ("status", status)):
         threading.Thread(name=name, target=target, daemon=True).start()
