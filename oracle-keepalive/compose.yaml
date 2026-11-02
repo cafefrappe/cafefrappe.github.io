@@ -1,0 +1,27 @@
+services:
+  keeporaclealive:
+    build: .
+    container_name: keeporaclealive
+    restart: unless-stopped
+    cpus: ${CONTAINER_CPUS:-1}
+    mem_limit: ${CONTAINER_MEM_LIMIT:-1g}
+    environment:
+      MEMORY_MB: ${MEMORY_MB:-256}
+      CPU_PERCENT: ${CPU_PERCENT:-10}
+      DOWNLOAD_MB: ${DOWNLOAD_MB:-10}
+      DOWNLOAD_INTERVAL: ${DOWNLOAD_INTERVAL:-600}
+      STOCK_INTERVAL: ${STOCK_INTERVAL:-300}
+      WEATHER_INTERVAL: ${WEATHER_INTERVAL:-180}
+      FX_INTERVAL: ${FX_INTERVAL:-120}
+      CLOUD_INTERVAL: ${CLOUD_INTERVAL:-300}
+      ANALYTICS_INTERVAL: ${ANALYTICS_INTERVAL:-60}
+      CYCLE_MIN: ${CYCLE_MIN:-420}
+      CYCLE_MAX: ${CYCLE_MAX:-540}
+      REST_TIME: ${REST_TIME:-60}
+      SYMBOLS: ${SYMBOLS:-}
+      DOWNLOAD_URL: ${DOWNLOAD_URL:-https://speed.cloudflare.com/__down}
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
