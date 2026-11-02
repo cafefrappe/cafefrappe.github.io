@@ -17,7 +17,12 @@ echo "=== 整机配置 ==="
 printf 'vCPU: %s\n' "$(nproc)"
 awk '/^MemTotal:/ {printf "物理内存: %.1f GiB\n", $2/1048576}' /proc/meminfo
 df -h /
+df -h /opt
 if [[ -d /var/lib/docker ]]; then df -h /var/lib/docker; fi
+if [[ -d "$INSTALL_DIR/data" ]]; then
+  printf '本项目数据目录: '
+  du -sh "$INSTALL_DIR/data" | awk '{print $1}'
+fi
 
 read -r total_before idle_before < <(cpu_times)
 read -r rx_before tx_before < <(net_bytes)
@@ -51,5 +56,5 @@ fi
 if [[ -f "$INSTALL_DIR/runtime.env" ]]; then
   echo
   echo "=== 当前目标 ==="
-  grep -E '^(CPU_TARGET_PERCENT|MEMORY_TARGET_PERCENT|DOWNLOAD_MB|DOWNLOAD_INTERVAL|STOCK_INTERVAL)=' "$INSTALL_DIR/runtime.env" || true
+  grep -E '^(CPU_TARGET_PERCENT|MEMORY_TARGET_PERCENT|DISK_TARGET_PERCENT|MEMORY_CAP_MB|DISK_CAP_MB|DOWNLOAD_MB|DOWNLOAD_INTERVAL|STOCK_INTERVAL|DAILY_PAUSE_MINUTES)=' "$INSTALL_DIR/runtime.env" || true
 fi
