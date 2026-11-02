@@ -12,7 +12,7 @@ read_values() {
   local file="$1" key value
   while IFS='=' read -r key value; do
     case "$key" in
-      HOST_CPUS|CPU_TARGET_PERCENT|MEMORY_TARGET_PERCENT|MEMORY_CAP_MB|DOWNLOAD_MB|DOWNLOAD_INTERVAL|STOCK_INTERVAL|WEATHER_INTERVAL|FX_INTERVAL|CLOUD_INTERVAL|ANALYTICS_INTERVAL|CYCLE_MIN|CYCLE_MAX|REST_TIME|SYMBOLS|DOWNLOAD_URL)
+      HOST_CPUS|CPU_TARGET_PERCENT|MEMORY_TARGET_PERCENT|MEMORY_CAP_MB|DISK_TARGET_PERCENT|DISK_CAP_MB|DOWNLOAD_MB|DOWNLOAD_INTERVAL|STOCK_INTERVAL|WEATHER_INTERVAL|FX_INTERVAL|CLOUD_INTERVAL|ANALYTICS_INTERVAL|CYCLE_MIN|CYCLE_MAX|REST_TIME|DAILY_PAUSE_MINUTES|SYMBOLS|DOWNLOAD_URL)
         cfg["$key"]="$value" ;;
     esac
   done < "$file"
@@ -28,6 +28,9 @@ while (($#)); do
     --cpu-target) cfg[CPU_TARGET_PERCENT]="${2:?missing value}"; shift 2 ;;
     --memory-target) cfg[MEMORY_TARGET_PERCENT]="${2:?missing value}"; shift 2 ;;
     --memory-cap-mb) cfg[MEMORY_CAP_MB]="${2:?missing value}"; shift 2 ;;
+    --disk-target) cfg[DISK_TARGET_PERCENT]="${2:?missing value}"; shift 2 ;;
+    --disk-cap-mb) cfg[DISK_CAP_MB]="${2:?missing value}"; shift 2 ;;
+    --daily-pause-minutes) cfg[DAILY_PAUSE_MINUTES]="${2:?missing value}"; shift 2 ;;
     --download-mb) cfg[DOWNLOAD_MB]="${2:?missing value}"; shift 2 ;;
     --download-interval) cfg[DOWNLOAD_INTERVAL]="${2:?missing value}"; shift 2 ;;
     --stock-interval) cfg[STOCK_INTERVAL]="${2:?missing value}"; shift 2 ;;
@@ -53,8 +56,11 @@ validate_int() {
 }
 validate_int HOST_CPUS 1 256
 validate_int CPU_TARGET_PERCENT 0 80
-validate_int MEMORY_TARGET_PERCENT 0 70
+validate_int MEMORY_TARGET_PERCENT 0 55
 validate_int MEMORY_CAP_MB 0 1000000
+validate_int DISK_TARGET_PERCENT 0 55
+validate_int DISK_CAP_MB 0 1000000
+validate_int DAILY_PAUSE_MINUTES 1 60
 validate_int DOWNLOAD_MB 0 1000
 validate_int DOWNLOAD_INTERVAL 30 86400
 validate_int STOCK_INTERVAL 30 86400
@@ -78,16 +84,16 @@ awk -v cap="$docker_cpus" -v cores="${cfg[HOST_CPUS]}" -v target="${cfg[CPU_TARG
 }
 
 if [[ "$show_only" == true ]]; then
-  printf 'VPS: %s vCPUs\nCPU target: %s%% of whole VPS\nRAM target: %s%% of whole VPS (max extra %s MiB)\n' \
-    "${cfg[HOST_CPUS]}" "${cfg[CPU_TARGET_PERCENT]}" "${cfg[MEMORY_TARGET_PERCENT]}" "${cfg[MEMORY_CAP_MB]}"
+  printf 'VPS: %s vCPUs\nCPU target: %s%% of whole VPS\nRAM target: %s%% of whole VPS (max extra %s MiB)\nDisk target: %s%% of data filesystem (max extra %s MiB)\nDaily pause: %s minutes\n' \
+    "${cfg[HOST_CPUS]}" "${cfg[CPU_TARGET_PERCENT]}" "${cfg[MEMORY_TARGET_PERCENT]}" "${cfg[MEMORY_CAP_MB]}" "${cfg[DISK_TARGET_PERCENT]}" "${cfg[DISK_CAP_MB]}" "${cfg[DAILY_PAUSE_MINUTES]}"
   printf 'Download: %s MiB every %s seconds; stock scan: every %s seconds\n' \
     "${cfg[DOWNLOAD_MB]}" "${cfg[DOWNLOAD_INTERVAL]}" "${cfg[STOCK_INTERVAL]}"
   exit 0
 fi
 
 temp="$(mktemp "$DIR/runtime.env.XXXXXX")"
-for key in HOST_CPUS CPU_TARGET_PERCENT MEMORY_TARGET_PERCENT MEMORY_CAP_MB DOWNLOAD_MB DOWNLOAD_INTERVAL \
-  STOCK_INTERVAL WEATHER_INTERVAL FX_INTERVAL CLOUD_INTERVAL ANALYTICS_INTERVAL CYCLE_MIN CYCLE_MAX REST_TIME \
+for key in HOST_CPUS CPU_TARGET_PERCENT MEMORY_TARGET_PERCENT MEMORY_CAP_MB DISK_TARGET_PERCENT DISK_CAP_MB DOWNLOAD_MB DOWNLOAD_INTERVAL \
+  STOCK_INTERVAL WEATHER_INTERVAL FX_INTERVAL CLOUD_INTERVAL ANALYTICS_INTERVAL CYCLE_MIN CYCLE_MAX REST_TIME DAILY_PAUSE_MINUTES \
   SYMBOLS DOWNLOAD_URL; do
   printf '%s=%s\n' "$key" "${cfg[$key]:-}" >> "$temp"
 done
