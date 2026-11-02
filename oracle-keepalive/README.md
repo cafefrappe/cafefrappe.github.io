@@ -1,66 +1,77 @@
-# Oracle VPS 一键部署保活工作负载
+# Oracle VPS 一键部署与动态调节
 
-按《保活.docx》最后一版整理：股票行情及统计、天气、美元兑人民币汇率、云平台状态、可控内存占用、周期性 CPU 工作和定量下载。运行时通过 Docker Compose 自动重启，并限制容器资源与日志大小。适用于 Linux x86_64 / ARM64 VPS；机器需要能访问 GitHub、Docker 镜像源和相关数据网站。
+按《保活.docx》整理股票行情与统计、天气、汇率、云平台状态、CPU/内存/磁盘目标占用和定量下载。安装器先读取 VPS 的 vCPU、物理内存及 `/opt` 所在磁盘容量，再部署 Docker Compose。运行中可调整目标，无需重建容器。
 
-## 一行安装
+## 安装或升级
 
-在 VPS 上执行（Ubuntu/Debian；其他已安装 Docker Engine 和 Compose 的 Linux 也可）：
+在 Ubuntu/Debian VPS 上运行；其他已安装 Docker Engine 和 Compose 的 Linux 也可运行：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/install.sh | sudo bash -s -- --memory-mb 2500 --mem-limit-mb 6144 --cpus 1 --cpu-percent 10 --download-mb 100 --download-interval 120
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/install.sh | sudo bash
 ```
 
-这组参数接近文档最后的 2.5 GB 内存、100 MB/2 分钟下载配置。**100 MB/2 分钟约为 72 GB/天**，会产生明显流量。无需指定参数时，默认使用 256 MiB 内存、一个核心的约 10% CPU、10 MiB/10 分钟下载。安装脚本会检测 Docker；缺失时运行 Docker 官方安装脚本，再构建容器并在后台启动。
+**已安装旧版的 VPS 也需重新运行一次**，使容器获得磁盘数据目录和动态配置。安装器会显示检测到的实际配置。默认目标为整机 CPU **30%**、整机内存 **35%**、`/opt` 所在磁盘已用空间 **35%**。CPU 控制器每 5 秒采样、参考约 1 分钟平均值调节；内存与磁盘控制器按整机当前使用量补足。其他服务已经超过目标时，本程序不会降低它们的占用。目标是近似值，不保证每时每刻达到。
 
-重新运行同一命令可更新文件和配置。若不想使用默认股票列表，可加 `--symbols SPY,QQQ,AAPL`。用 `--download-mb 0` 禁用大文件下载。
+默认下载 10 MiB/30 分钟，约 480 MiB/天；下载内容流式读取后立即丢弃，不保存文件。用于磁盘目标的文件只写入 `/opt/oracle-keepalive/data/managed`。默认项目磁盘上限按该磁盘总量的 35% 计算；写入时预留至少 20% 磁盘空间及 1 GiB 空闲，若空闲空间跌到预留线附近，会清理本项目数据文件。可用 `--disk-cap-mb` 降低上限。大容量磁盘达到目标可能耗时较长。容器日志采用大小轮转。
 
-## 常用参数
+安装时可指定目标和参数，例如：
 
-| 参数 | 默认 | 作用 |
-|---|---:|---|
-| `--memory-mb` | 256 | 容器内额外占用的内存 MiB |
-| `--mem-limit-mb` | 1024 | Docker 容器内存上限 MiB，至少比上述值多 512 |
-| `--cpus` | 1 | Docker CPU 核数上限 |
-| `--cpu-percent` | 10 | 约占一个核心的百分比，受 `--cpus` 上限约束 |
-| `--download-mb` | 10 | 每轮最多下载的 MiB，0 为关闭 |
-| `--download-interval` | 600 | 两轮下载之间秒数 |
-| `--stock-interval` | 300 | 两轮股票扫描之间秒数 |
-| `--symbols` | 文档股票列表 | 英文逗号分隔的代码 |
-| `--cycle-min` / `--cycle-max` | 420 / 540 | 运行阶段随机时长范围（秒） |
-| `--rest-time` | 60 | 休息时长（秒） |
-| `--download-url` | Cloudflare 下载接口 | 自选 HTTPS 下载接口，支持 `?bytes=N` |
+```sh
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/install.sh | sudo bash -s -- --cpu-target 30 --memory-target 35 --disk-target 35 --download-mb 5 --download-interval 3600
+```
 
-行情、天气、汇率及云平台接口可能失败或限流，失败会记录在日志中并等待下一轮。文档中的超高频股票请求已调整为每 300 秒扫描一次，防止对外部服务发出大量请求。内存占用是额外分配量，容器实际用量还包含 Python 和依赖库。
+其他参数：`--memory-cap-mb` 限制额外分配内存，`--cpus` 和 `--mem-limit-mb` 覆盖自动计算的 Docker 上限，`--symbols SPY,QQQ,AAPL` 指定股票代码，`--download-mb 0` 关闭大文件下载，`--daily-pause-minutes 5` 指定每日维护暂停时长。
 
-## 管理
+## 运行中调整
 
-一键查询状态（显示容器状态、CPU、内存、网络 I/O、磁盘 I/O、进程数、主机负载和最近状态日志）：
+容器每约 5 秒读取一次配置。可随时更改负载目标与查询间隔：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/control.sh | sudo bash -s -- --cpu-target 32 --memory-target 36 --disk-target 36 --download-mb 5 --download-interval 3600 --stock-interval 600
+```
+
+恢复**默认负载参数**（CPU 30%、内存 35%、磁盘 35%及分配上限）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/control.sh | sudo bash -s -- --reset-load
+```
+
+恢复**默认绝对参数**（下载量与间隔、各数据源查询间隔、运行/休息时长、每日暂停时长和股票列表）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/control.sh | sudo bash -s -- --reset-absolute
+```
+
+全部恢复用 `--reset-all`，查看当前目标用 `--show`。其他可调参数见 [control.sh](control.sh)；绝对间隔单位为秒，磁盘/内存上限单位为 MiB。CPU 目标范围 0–80%，内存和磁盘目标范围 0–55%。
+
+## 每日维护
+
+容器每运行约 24 小时，会暂停工作负载，释放本项目分配的内存，删除 `/opt/oracle-keepalive/data/managed` 中本程序创建的全部 `block-*.bin` 文件，默认等待 5 分钟后退出，由 Docker 自动重启全新进程。**不会删除 VPS 系统文件、其他程序文件或 Docker 的其他镜像/卷。** 如需禁用磁盘填充，可运行 `control.sh --disk-target 0`。
+
+## 查询整机状态
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/status.sh | sudo bash
 ```
 
-一键删除工作负载，保留 Docker（默认）：
+报告整机 vCPU、物理内存、磁盘使用率、5 秒 CPU/网络速率、约 1 分钟和 5 分钟的整机 CPU/内存平均值，以及容器资源作为辅助信息。首次安装后要运行约 5 分钟，5 分钟平均值才覆盖完整窗口。云平台网站采样周期和计算口径可能不同，数值不一定完全一致。
+
+## 删除
+
+保留 Docker：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/uninstall.sh | sudo bash -s -- --keep-docker
 ```
 
-一键删除工作负载并卸载 Docker 软件包：
+同时卸载 Docker 软件包：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cafefrappe/cafefrappe.github.io/main/oracle-keepalive/uninstall.sh | sudo bash -s -- --remove-docker
 ```
 
-卸载 Docker 前会检查是否存在其他容器；有其他容器时会拒绝卸载。Docker 的数据目录仍会保留，避免误删旧镜像或卷。[Docker 官方卸载说明](https://docs.docker.com/engine/install/ubuntu/#uninstall-docker-engine)也将软件包卸载与删除数据目录分成两步。
+卸载 Docker 前会检查是否有其他容器。Docker 旧数据目录默认保留。[Docker 官方文档](https://docs.docker.com/engine/install/ubuntu/#uninstall-docker-engine)也将软件包与数据的删除分开处理。
 
-手动管理命令：
+查看日志：`sudo docker compose -f /opt/oracle-keepalive/compose.yaml logs -f --tail=100`。
 
-```sh
-sudo docker compose -f /opt/oracle-keepalive/compose.yaml ps
-sudo docker compose -f /opt/oracle-keepalive/compose.yaml logs -f --tail=100
-sudo docker stats keeporaclealive
-sudo docker compose -f /opt/oracle-keepalive/compose.yaml down
-```
-
-这只是运行工作负载的工具；Oracle 是否保留免费实例取决于其当时的政策和实际使用情况，脚本无法保证结果。
+外部行情、天气和汇率接口可能失败或限流；失败会记入日志并在下一轮重试。脚本无法保证云平台保留免费实例。
