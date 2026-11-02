@@ -82,20 +82,28 @@ if command -v apt-get >/dev/null && command -v dpkg-query >/dev/null; then
       installed+=("$package")
     fi
   done
-  if ((${#installed[@]})); then
-    apt-get purge -y "${installed[@]}"
+  if ((${#installed[@]} == 0)); then
+    echo "No supported Docker packages were found; Docker may have been installed manually" >&2
+    exit 1
   fi
+  apt-get purge -y "${installed[@]}"
 elif command -v dnf >/dev/null && command -v rpm >/dev/null; then
   for package in "${packages[@]}"; do
     if rpm -q "$package" >/dev/null 2>&1; then
       installed+=("$package")
     fi
   done
-  if ((${#installed[@]})); then
-    dnf remove -y "${installed[@]}"
+  if ((${#installed[@]} == 0)); then
+    echo "No supported Docker packages were found; Docker may have been installed manually" >&2
+    exit 1
   fi
+  dnf remove -y "${installed[@]}"
 else
   echo "Unsupported package manager; Docker packages were not removed" >&2
+  exit 1
+fi
+if command -v docker >/dev/null; then
+  echo "Some Docker components are still present; inspect manually-installed binaries" >&2
   exit 1
 fi
 echo "Docker packages removed. Existing Docker data under /var/lib/docker and /var/lib/containerd was preserved."
