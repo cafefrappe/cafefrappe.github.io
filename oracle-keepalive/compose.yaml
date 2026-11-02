@@ -9,6 +9,7 @@ services:
       HOST_CPUS: ${HOST_CPUS:-1}
     volumes:
       - /opt/oracle-keepalive:/config
+      - /opt/oracle-keepalive/data:/data
     logging:
       driver: json-file
       options:
